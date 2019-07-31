@@ -1,11 +1,10 @@
 # dramatiq_cached_results
-This is a simple POC to see if it is possible to use dramatiq's results
+This is a simple POC to see if it is possible to use dramatiq's `Results`
 middleware to cache based on arguments instead of generating unique keys per
 message. The new caching middleware is in the `cache` module. `app.py` is a
 simple test to see if it works.
 
 ## Running
-
 ```
 docker-compose build
 docker-compose run app
@@ -15,7 +14,7 @@ docker-compose run app
 
 #### Cannot use actor pipelines
 Pipelines work by fetching the result based on last message ID. The current
-CacheResultBackend generated the message_key (the cache key) by inspecting the
+CacheResultBackend generates the message_key (the cache key) by inspecting the
 actor's signature, binding the message arguments, and hashing the result. You
 cannot `signature.bind()` partial arguments.
 

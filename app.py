@@ -23,23 +23,6 @@ broker.add_middleware(dramatiq.results.Results(backend=results_backend))
 dramatiq.set_broker(broker)
 
 
-def clean_arg(arg):
-    """Recussivly attempt to clean the argument to make the """
-    if isinstance(arg, (dt.date, dt.datetime)):
-        return arg.isoformat()
-    if isinstance(arg, str):
-        return arg
-    # this block will also handle defaultdicts and OrderedDicts
-    if isinstance(arg, dict):
-        output = collections.OrderedDict()
-        for k, v in sorted(arg.items()):
-            output[k] = clean_arg(arg)
-        return output
-    if isinstance(arg, typing.Iterable):
-        return sorted(iter(arg))
-    return arg
-
-
 @dramatiq.actor(store_results=True)
 def adder(a, b):
     answer = a + b

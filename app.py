@@ -48,14 +48,31 @@ def adder(a, b):
 
 
 def main():
+    # make sure stuff is cleaned up
+    cache_keys = client.keys('adder:*')
+    if cache_keys:
+        client.delete(*cache_keys)
+    broker.flush_all()
+
     try:
         adder.message(1, 2).get_result()
     except dramatiq.results.ResultMissing:
-        print('result not there')
-    print('sending message')
-    adder.send(1, 2)
-    assert adder.message(1, 2).get_result() == 3
-    print('got the correct answer!')
+        print('result not there, as expected')
+
+    print('sending first message')
+    message1 = adder.send(1, 2)
+
+    print('creating a second message with the same arguments')
+    message2 = adder.message(1, 2)
+    assert message1.message_id != message2.message_id
+
+    print('getting the results...')
+    result1 = message1.get_result(block=True)
+    result2 = message2.get_result()
+
+    assert result2 == 3 and result1 == result2
+    print('got the correct answer! both messages match. results were'
+          ' successfully fetched from the cache.')
 
 
 if __name__ == '__main__':

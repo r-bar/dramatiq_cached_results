@@ -14,7 +14,7 @@ docker-compose run app
 ## Known Issues
 
 #### Cannot use actor pipelines
-Pilelines work by fetching the result based on last message ID. The current
+Pipelines work by fetching the result based on last message ID. The current
 CacheResultBackend generated the message_key (the cache key) by inspecting the
 actor's signature, binding the message arguments, and hashing the result. You
 cannot `signature.bind()` partial arguments.

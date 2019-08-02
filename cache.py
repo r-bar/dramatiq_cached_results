@@ -1,6 +1,8 @@
+from contextlib import suppress
 from collections import deque
 import functools as fn
 import hashlib
+import itertools as it
 import inspect
 import json
 import logging
@@ -144,37 +146,54 @@ class CacheBackendMixin:
         message_key = signature_key(bound_args, message.actor_name)
         return message_key
 
+    def get_result(self, message, *, block=False, timeout=None):
+        try:
+            return super().get_result(message, block=block, timeout=timeout)
+        except TypeError:
+            # TypeError will occur when this message is partial
+            if message.options.get('pipe_source') is None:
+                raise
+        # attempt to build the full key from the pipeline source results
+        source_message = dramatiq.Message(**message.options['pipe_source'])
+        source_result = self.get_result(source_message, block=block,
+                                        timeout=timeout)
+        full_args = tuple(it.chain(message.args, [source_result]))
+        full_message = message.copy(args=full_args)
+        return self.get_result(full_message, block=block, timeout=timeout)
+
 
 class CacheBackend(CacheBackendMixin, RedisBackend):
     pass
 
 
-# class pipeline(dramatiq.pipeline):
-#     """If you use the cache pipeline mixin you cannot use the normal pipeline
-#     mechanism due to not being able to inspect a 'partially applied'
-#     function. This pipeline adds a pipeline_key to the message options as a
-#     second target to save results"""
+class pipeline(dramatiq.pipeline):
+    """If you use the cache pipeline mixin you cannot use the normal pipeline
+    mechanism due to not being able to inspect a 'partially applied'
+    function. This pipeline adds a pipeline_key to the message options as a
+    second target to save results"""
 
-#     def __init__(self, children, *, broker=None):
-#         self.broker = broker or dramatiq.get_broker()
-#         self.messages = messages = []
+    def __init__(self, children, *, broker=None):
+        self.broker = broker or dramatiq.get_broker()
+        self.messages = []
+        messages = []
 
-#         for child in children:
-#             if isinstance(child, pipeline):
-#                 messages.extend(message.copy() for message in child.messages)
-#             else:
-#                 messages.append(child.copy())
+        for child in children:
+            if isinstance(child, pipeline):
+                messages.extend(message for message in child.messages)
+            else:
+                messages.append(child)
 
-#         window = deque([None, None], 3)
-#         for message in messages:
-#             window.append(message)
-#             prev_msg, current_msg, next_msg = window
-#             if current_msg is None:
-#                 continue
-#             if prev_msg:
-#                 prev_msg.options['pipe_target'] = current_msg.asdict()
-#             if next_msg:
-
-
-
-#     pass
+        # The msg.copy() is important here. It serves several functions.
+        # 1. It prevents addions to message from altering the source messages.
+        # 2. Those unaltered messages are the ones that need to be used for
+        # pipe_target and pipe_source in order to prevent circular references
+        # when executing the pipeline.
+        prev_msg = None
+        for n, message in enumerate(msg.copy() for msg in messages):
+            with suppress(IndexError):
+                next_msg = messages[n + 1]
+                message.options['pipe_target'] = next_msg.asdict()
+            if prev_msg:
+                message.options['pipe_source'] = prev_msg.asdict()
+            self.messages.append(message)
+            prev_msg = messages[n]

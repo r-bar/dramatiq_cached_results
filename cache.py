@@ -126,11 +126,9 @@ def signature_key(bound_args: inspect.BoundArguments, prefix: str,
 
 
 class CacheBackendMixin:
-    def __init__(self, *, broker=None, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        assert broker is not None, \
-            'You must specify a broker to build the cache key'
-        self.broker = broker
+        self.broker = dramatiq.get_broker()
 
     def build_message_key(self, message) -> str:
         actor = self.broker.get_actor(message.actor_name)

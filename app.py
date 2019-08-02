@@ -18,14 +18,10 @@ logger = logging.getLogger(__name__)
 client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
 
 broker = RedisBroker(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
-
-# results_backend = dramatiq.results.backends.RedisBackend(client=client)
-# broker.add_middleware(dramatiq.results.Results(backend=results_backend))
-
-cache_backend = cache.CacheBackend(client=client, broker=broker)
-broker.add_middleware(dramatiq.results.Results(backend=cache_backend))
-
 dramatiq.set_broker(broker)
+
+cache_backend = cache.CacheBackend(client=client)
+broker.add_middleware(dramatiq.results.Results(backend=cache_backend))
 
 
 @dramatiq.actor(store_results=True)

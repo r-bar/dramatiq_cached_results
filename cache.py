@@ -1,3 +1,4 @@
+from collections import deque
 import functools as fn
 import hashlib
 import inspect
@@ -136,7 +137,10 @@ class CacheBackendMixin:
         # actor.fn accepts any **kwargs then this ensures that those are sorted
         # in the final bound args as well
         kwargs = {k: v for k, v in sorted(message.kwargs.items())}
-        bound_args = signature.bind(*message.args, **kwargs)
+        try:
+            bound_args = signature.bind(*message.args, **kwargs)
+        except TypeError:
+            raise TypeError('Cannot cache partial messages')
         message_key = signature_key(bound_args, message.actor_name)
         return message_key
 
@@ -145,9 +149,32 @@ class CacheBackend(CacheBackendMixin, RedisBackend):
     pass
 
 
-class pipeline(dramatiq.pipeline):
-    """If you use the cache pipeline mixin you cannot use the normal pipeline
-    mechanism due to not being able to inspect a 'partially applied'
-    function. This pipeline adds a pipeline_key to the message options as a
-    second target to save results"""
-    pass
+# class pipeline(dramatiq.pipeline):
+#     """If you use the cache pipeline mixin you cannot use the normal pipeline
+#     mechanism due to not being able to inspect a 'partially applied'
+#     function. This pipeline adds a pipeline_key to the message options as a
+#     second target to save results"""
+
+#     def __init__(self, children, *, broker=None):
+#         self.broker = broker or dramatiq.get_broker()
+#         self.messages = messages = []
+
+#         for child in children:
+#             if isinstance(child, pipeline):
+#                 messages.extend(message.copy() for message in child.messages)
+#             else:
+#                 messages.append(child.copy())
+
+#         window = deque([None, None], 3)
+#         for message in messages:
+#             window.append(message)
+#             prev_msg, current_msg, next_msg = window
+#             if current_msg is None:
+#                 continue
+#             if prev_msg:
+#                 prev_msg.options['pipe_target'] = current_msg.asdict()
+#             if next_msg:
+
+
+
+#     pass

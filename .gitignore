@@ -1,3 +1,4 @@
 __pycache__
 *.pyc
 *.pyo
+docker-compose.override.yaml

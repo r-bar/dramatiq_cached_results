@@ -1,5 +1,4 @@
 from contextlib import suppress
-from collections import deque
 import functools as fn
 import hashlib
 import itertools as it
@@ -14,6 +13,8 @@ from typing import (
 
 from dramatiq.results.backends import RedisBackend
 import dramatiq
+
+from redis_client import client
 
 logger = logging.getLogger(__name__)
 
@@ -83,55 +84,53 @@ def signature_key(bound_args: inspect.BoundArguments, prefix: str,
     return generate_key(prefix, objects, **generate_kwargs)
 
 
-# def memoized(func: Optional[Callable] = None, *,
-#              ttl: int = 300,
-#              prefix: Optional[str] = None,
-#              only: Optional[Iterable[str]] = None,
-#              exclude: Optional[Iterable[str]] = None,
-#              ) -> Callable:
-#     """Decorates ``func`` with a wrapper that caches the results of
-#     ``func`` in Redis with a key based on the arguments passed.
+def memoized(func: Optional[Callable] = None, *,
+             ttl: int = 300,
+             prefix: Optional[str] = None,
+             only: Optional[Iterable[str]] = None,
+             exclude: Optional[Iterable[str]] = None,
+             ) -> Callable:
+    """Decorates ``func`` with a wrapper that caches the results of
+    ``func`` in Redis with a key based on the arguments passed.
 
-#     :param prefix: cache key prefix that defaults to function name
+    :param prefix: cache key prefix that defaults to function name
 
-#     """
-#     only = None if only is None else set(only)
-#     exclude = None if exclude is None else set(exclude)
+    """
+    only = None if only is None else set(only)
+    exclude = None if exclude is None else set(exclude)
 
-#     def decorator(func: Callable):
-#         nonlocal prefix
-#         if prefix is None:
-#             prefix = func.__name__
-#         sig = inspect.signature(func)
+    def decorator(func: Callable):
+        nonlocal prefix
+        if prefix is None:
+            prefix = func.__name__
+        sig = inspect.signature(func)
 
-#         @fn.wraps(func)
-#         def wrapper(*args, **kwargs):
-#             key = signature_key(
-#                 sig.bind(*args, **kwargs), prefix,
-#                 only=only, exclude=exclude,
-#             )
-#             result = client.get(key)
-#             if result is None:
-#                 result = func(*args, **kwargs)
-#                 client.set(key, json.dumps(result), ex=ttl)
-#             else:
-#                 result = json.loads(result)
-#             return result
+        @fn.wraps(func)
+        def wrapper(*args, **kwargs):
+            key = signature_key(
+                sig.bind(*args, **kwargs), prefix,
+                only=only, exclude=exclude,
+            )
+            result = client.get(key)
+            if result is None:
+                result = func(*args, **kwargs)
+                client.set(key, json.dumps(result), ex=ttl)
+            else:
+                result = json.loads(result)
+            return result
 
-#         return wrapper
+        return wrapper
 
-#     if callable(func):
-#         return decorator(func)
-#     return decorator
+    if callable(func):
+        return decorator(func)
+    return decorator
 
 
 class CacheBackendMixin:
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.broker = dramatiq.get_broker()
 
     def build_message_key(self, message) -> str:
-        actor = self.broker.get_actor(message.actor_name)
+        broker = dramatiq.get_broker()
+        actor = broker.get_actor(message.actor_name)
         signature = inspect.signature(actor.fn)
         # even though .bind() will sort any declared keyword arguments, if the
         # actor.fn accepts any **kwargs then this ensures that those are sorted
@@ -195,3 +194,23 @@ class pipeline(dramatiq.pipeline):
                 message.options['pipe_source'] = prev_msg.asdict()
             self.messages.append(message)
             prev_msg = messages[n]
+
+
+class CachedActor(dramatiq.Actor):
+    """Uses existing results middleware backends to store the result when the
+    actor is called directly"""
+
+    def __call__(self, *args, **kwargs):
+        message = self.message(*args, **kwargs)
+        with suppress(dramatiq.results.errors.ResultMissing):
+            return message.get_result()
+
+        result = super().__call__(*args, **kwargs)
+        broker = dramatiq.get_broker()
+        for middleware in broker.middleware:
+            if not isinstance(middleware, dramatiq.results.Results):
+                continue
+            middleware.backend
+            result_ttl = self.options.get('result_ttl', middleware.result_ttl)
+            middleware.backend.store_result(message, result, result_ttl)
+        return result

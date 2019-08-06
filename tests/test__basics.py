@@ -1,8 +1,12 @@
+import logging
+import time
+
 import dramatiq
 import pytest
 
 import actors
 import cache
+import middleware
 
 
 @pytest.fixture
@@ -12,14 +16,25 @@ def broker():
 
 
 @pytest.fixture
-def stub_worker(broker):
+def stub_broker():
+    from dramatiq.brokers.stub import StubBroker
+    broker = StubBroker()
+    dramatiq.set_broker(broker)
+    yield broker
+
+
+@pytest.fixture
+def stub_worker():
+    broker = dramatiq.get_broker()
     worker = dramatiq.Worker(broker, worker_timeout=1000)
     worker.start()
-    yield worker
-    worker.stop()
+    try:
+        yield worker
+    finally:
+        worker.stop()
 
 
-def test_basic_happy_path(stub_worker):
+def test_basic_happy_path(broker, stub_worker):
     with pytest.raises(dramatiq.results.ResultMissing):
         actors.adder.message(1, 2).get_result()
 
@@ -44,7 +59,7 @@ def test_should_not_cache_partial_messages():
         actors.cache_backend.build_message_key(actors.adder(1))
 
 
-def test_pipelines_can_be_used(stub_worker):
+def test_pipelines_can_be_used(broker, stub_worker):
     pipe = cache.pipeline([
         actors.adder.message(3, 4),
         actors.adder.message(3),
@@ -54,7 +69,7 @@ def test_pipelines_can_be_used(stub_worker):
     assert result == 10
 
 
-def test_pipelines_are_cachable(stub_worker):
+def test_pipelines_are_cachable(broker, stub_worker):
     pipe = cache.pipeline([
         actors.adder.message(3, 1),
         actors.adder.message(6),
@@ -74,7 +89,18 @@ def test_pipelines_are_cachable(stub_worker):
         'intermediate results should be cached'
 
 
-def test_should_cache_direct_call_result(stub_worker):
+def test_should_cache_direct_call_result(broker, stub_worker):
     result = actors.adder(1, 2)
     cached_result = actors.adder.message(1, 2).get_result()
     assert result == cached_result
+
+
+def test_progress_middleware(broker, stub_worker, caplog):
+    actors.exclusive_actor.send_with_options(exclusive=True)
+    with pytest.raises(middleware.AlreadyQueued):
+        actors.exclusive_actor.send_with_options(exclusive=True)
+    # messages queued non exclusively should not raise
+    actors.exclusive_actor.send_with_options(exclusive=False)
+    stub_worker.join()
+    time.sleep(4)
+    actors.exclusive_actor.send_with_options(exclusive=True)

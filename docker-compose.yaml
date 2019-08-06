@@ -6,17 +6,9 @@ services:
 
   worker:
     image: dramatiq_cached_results
-    command: dramatiq app
-    environment:
-      REDIS_HOST: redis
-    depends_on:
-      - redis
-
-  app:
-    image: dramatiq_cached_results
     build: .
+    command: dramatiq actors
     environment:
       REDIS_HOST: redis
     depends_on:
       - redis
-      - worker

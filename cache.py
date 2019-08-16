@@ -15,6 +15,7 @@ from dramatiq.results.backends import RedisBackend
 import dramatiq
 
 from redis_client import client
+import mapper
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,6 @@ def signature_key(bound_args: inspect.BoundArguments, prefix: str,
     :param only: optional whitelist of arguments to include in cache key
     :param exclude: optional blacklist of arguments to exclude in cache key
     :param generate_kwargs: keyword arguments passed to ``generate_key``
-
     """
     only = None if only is None else set(only)
     exclude = None if exclude is None else set(exclude)
@@ -89,12 +89,17 @@ def memoized(func: Optional[Callable] = None, *,
              prefix: Optional[str] = None,
              only: Optional[Iterable[str]] = None,
              exclude: Optional[Iterable[str]] = None,
+             type_mapper: Optional[mapper.FieldMapper] = None,
              ) -> Callable:
     """Decorates ``func`` with a wrapper that caches the results of
     ``func`` in Redis with a key based on the arguments passed.
 
     :param prefix: cache key prefix that defaults to function name
-
+    :param ttl: the cache experation time in seconds
+    :param only: optional whitelist of arguments to include in cache key
+    :param exclude: optional blacklist of arguments to exclude in cache key
+    :param type_mapper: optional FieldMapper instance used for serialization
+        and cache key generation
     """
     only = None if only is None else set(only)
     exclude = None if exclude is None else set(exclude)
@@ -103,20 +108,22 @@ def memoized(func: Optional[Callable] = None, *,
         nonlocal prefix
         if prefix is None:
             prefix = func.__name__
-        sig = inspect.signature(func)
+        schema = mapper.BoundSchema(func, mapper=type_mapper)
 
         @fn.wraps(func)
         def wrapper(*args, **kwargs):
+            ser_args, ser_kwargs = schema.serialize_arguments(*args, **kwargs)
             key = signature_key(
-                sig.bind(*args, **kwargs), prefix,
+                schema.signature.bind(*ser_args, **ser_kwargs), prefix,
                 only=only, exclude=exclude,
             )
             result = client.get(key)
             if result is None:
                 result = func(*args, **kwargs)
-                client.set(key, json.dumps(result), ex=ttl)
+                ser_result = schema.serialize_result(result)
+                client.set(key, json.dumps(ser_result), ex=ttl)
             else:
-                result = json.loads(result)
+                result = json.loads(schema.deserialize_result(result))
             return result
 
         return wrapper
@@ -196,7 +203,7 @@ class pipeline(dramatiq.pipeline):
             prev_msg = messages[n]
 
 
-class CachedActor(dramatiq.Actor):
+class CachedActorMixin:
     """Uses existing results middleware backends to store the result when the
     actor is called directly"""
 
@@ -214,3 +221,7 @@ class CachedActor(dramatiq.Actor):
             result_ttl = self.options.get('result_ttl', middleware.result_ttl)
             middleware.backend.store_result(message, result, result_ttl)
         return result
+
+
+class CachedActor(CachedActorMixin, dramatiq.Actor):
+    pass

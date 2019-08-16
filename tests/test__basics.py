@@ -1,3 +1,4 @@
+import datetime as dt
 import logging
 import time
 
@@ -19,7 +20,7 @@ def broker():
 def stub_broker():
     from dramatiq.brokers.stub import StubBroker
     broker = StubBroker()
-    dramatiq.set_broker(broker)
+    actors.initialize_broker(broker)
     yield broker
 
 
@@ -104,3 +105,23 @@ def test_progress_middleware(broker, stub_worker, caplog):
     stub_worker.join()
     time.sleep(4)
     actors.exclusive_actor.send_with_options(exclusive=True)
+
+
+def test_typed_backend():
+    message = actors.now.message()
+    result = actors.now()
+    actors.cache_backend.store_result(message, result, ttl=10000)
+
+    cached = message.get_result()
+    assert isinstance(cached, dt.datetime)
+    assert cached == result
+
+
+def test_cache_datetime(broker, stub_worker):
+    message1 = actors.now.message()
+    with pytest.raises(dramatiq.results.ResultMissing):
+        message1.get_result()
+    broker.enqueue(message1)
+    stub_worker.join()
+    result = message1.get_result(block=True, timeout=1000)
+    assert isinstance(result, dt.datetime)

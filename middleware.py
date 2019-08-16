@@ -1,10 +1,18 @@
+import functools as fn
 import datetime as dt
 import time
 import inspect
+import threading
+from contextlib import suppress
+from typing import (
+    Any,
+    Optional,
+)
 
 import dramatiq
 
 import cache
+import mapper
 
 
 TEN_MINS_IN_MS = 600 * 1000
@@ -90,3 +98,65 @@ class ProgressMiddleware(dramatiq.Middleware):
             # self.client.transaction(lambda pipe: pipe.delete(message_key),
             #                         message_key)
             self.client.delete(message_key)
+
+
+@fn.lru_cache(maxsize=100)
+def _get_actor_schema(actor_name: str) -> Optional[mapper.BoundSchema]:
+    with suppress(AttributeError):
+        broker = dramatiq.get_broker()
+        actor = broker.get_actor(actor_name)
+        return actor.fn.schema
+
+
+def _get_message_schema(message_data: Any):
+    # Despite the type annotations on encode and decode  we can be passed
+    # non-MessageData.  Seems to be most common in the Results middleware.
+    with suppress(TypeError, AttributeError):
+        return _get_actor_schema(message_data.actor_name)
+
+
+class TypedEncoderMixin:
+
+    def encode(self, data: dramatiq.encoder.MessageData) -> bytes:
+        schema = _get_message_schema(data)
+        if schema is None:
+            return super().encode(data)
+
+        output = {**data}
+        args, kwargs = schema.serialize_arguments(*data['args'],
+                                                  **data['kwargs'])
+        output['args'] = args
+        output['kwargs'] = kwargs
+        return super().encode(output)
+
+    def decode(self, data: bytes) -> dramatiq.encoder.MessageData:
+        output = super().decode(data)
+        schema = _get_message_schema(data)
+        if schema is None:
+            return output
+        args, kwargs = schema.deserialize_arguments(*data['args'],
+                                                    **data['kwargs'])
+        output['args'] = args
+        output['kwargs'] = kwargs
+        return output
+
+
+class TypedResultsBackendMixin:
+    """Serializes and deserializes the results from a typed actor"""
+
+    def store_result(self, message, result: Any, ttl: int):
+        schema = _get_message_schema(message)
+        if schema is not None:
+            result = schema.serialize_result(result)
+        super().store_result(message, result, ttl=ttl)
+
+    def get_result(self, message, *, block=False, timeout=None) -> Any:
+        result = super().get_result(message, block=block, timeout=timeout)
+        schema = _get_message_schema(message)
+        if schema is not None:
+            result = schema.deserialize_result(result)
+        return result
+
+
+class TypedEncoder(TypedEncoderMixin, dramatiq.JSONEncoder):
+    pass

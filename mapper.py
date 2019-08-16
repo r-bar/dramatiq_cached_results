@@ -229,13 +229,14 @@ class BoundSchema:
         return self.result.serialize(attr='result', obj={'result': result})
 
     def deserialize_result(self, result):
+        return self.result.deserialize(result, attr='result',
+                                       data={'result': result})
+
+    def validate_result(self, result):
         if callable(getattr(self.result, 'validate', None)):
             self.result.validate(result)
         elif callable(getattr(self.result, '_validate', None)):
             self.result._validate(result)
-
-    def validate_result(self, result):
-        raise NotImplementedError
 
     def round_trip(self, *ser_args, **ser_kwargs):
         """Deserializes arguments, executes the bound function, and returns the

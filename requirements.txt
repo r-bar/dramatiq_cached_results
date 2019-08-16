@@ -1,3 +1,4 @@
 redis
 dramatiq[watch, redis]
 pytest
+marshmallow==3.0rc9
